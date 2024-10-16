@@ -79,8 +79,13 @@ class BERTTokenizer(AbstractEncoder):
 
 class BERTEmbedder(AbstractEncoder):
     """Uses the BERT tokenizr model and add some transformer encoder layers"""
-    def __init__(self, n_embed, n_layer, vocab_size=30522, max_seq_len=77,
-                 device="cuda",use_tokenizer=True, embedding_dropout=0.0):
+    def __init__(self, 
+                 n_embed, # 1280
+                 n_layer, # 32
+                 vocab_size=30522, 
+                 max_seq_len=77,
+                 device="cuda",use_tokenizer=True, 
+                 embedding_dropout=0.0):
         super().__init__()
         self.use_tknz_fn = use_tokenizer
         if self.use_tknz_fn:

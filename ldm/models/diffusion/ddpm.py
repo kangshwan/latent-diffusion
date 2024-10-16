@@ -45,21 +45,21 @@ class DDPM(pl.LightningModule):
     # classic DDPM with Gaussian diffusion, in image space
     def __init__(self,
                  unet_config,
-                 timesteps=1000,
+                 timesteps=1000,                    # 1000
                  beta_schedule="linear",
                  loss_type="l2",
                  ckpt_path=None,
                  ignore_keys=[],
                  load_only_unet=False,
-                 monitor="val/loss",
-                 use_ema=True,
-                 first_stage_key="image",
-                 image_size=256,
-                 channels=3,
-                 log_every_t=100,
+                 monitor="val/loss",                # val/loss_simple_ema
+                 use_ema=True,                      # False
+                 first_stage_key="image",           # image
+                 image_size=256,                    # 32
+                 channels=3,                        # 4
+                 log_every_t=100,                   # 200
                  clip_denoised=True,
-                 linear_start=1e-4,
-                 linear_end=2e-2,
+                 linear_start=1e-4,                 # 0.00085
+                 linear_end=2e-2,                   # 0.012
                  cosine_s=8e-3,
                  given_betas=None,
                  original_elbo_weight=0.,
@@ -424,17 +424,25 @@ class DDPM(pl.LightningModule):
 class LatentDiffusion(DDPM):
     """main class"""
     def __init__(self,
-                 first_stage_config,
-                 cond_stage_config,
-                 num_timesteps_cond=None,
-                 cond_stage_key="image",
-                 cond_stage_trainable=False,
-                 concat_mode=True,
+                 first_stage_config,                # AutoencoderKL
+                 cond_stage_config,                 # BERTEmbedder in Text2IMG
+                 num_timesteps_cond=None,           # 1
+                 cond_stage_key="image",            # caption
+                 cond_stage_trainable=False,        # True
+                 concat_mode=True,                  
                  cond_stage_forward=None,
-                 conditioning_key=None,
-                 scale_factor=1.0,
+                 conditioning_key=None,             # crossattn
+                 scale_factor=1.0,                  # 0.18215
                  scale_by_std=False,
-                 *args, **kwargs):
+                 *args, **kwargs):  #linear_start: 0.00085
+                                    # linear_end: 0.012
+                                    # num_timesteps_cond: 1
+                                    # log_every_t: 200
+                                    # timesteps: 1000
+                                    # image_size: 32
+                                    # channels: 4
+                                    # monitor: val/loss_simple_ema
+                                    # use_ema: False
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
         assert self.num_timesteps_cond <= kwargs['timesteps']
@@ -445,7 +453,7 @@ class LatentDiffusion(DDPM):
             conditioning_key = None
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
-        super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
+        super().__init__(conditioning_key=conditioning_key, *args, **kwargs)    #unet_config: UNetModel
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key

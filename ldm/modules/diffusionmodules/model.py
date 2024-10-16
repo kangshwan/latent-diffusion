@@ -178,7 +178,7 @@ class AttnBlock(nn.Module):
     def forward(self, x):
         h_ = x
         h_ = self.norm(h_)
-        q = self.q(h_)
+        q = self.q(h_) # b, c, h, w
         k = self.k(h_)
         v = self.v(h_)
 
@@ -366,66 +366,79 @@ class Model(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
-                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
-                 resolution, z_channels, double_z=True, use_linear_attn=False, attn_type="vanilla",
+    def __init__(self, *, 
+                 ch,                        # 128
+                 out_ch,                    # 3
+                 ch_mult=(1,2,4,8),         # (1,2,4,4)
+                 num_res_blocks,            # 2
+                 attn_resolutions,          # []
+                 dropout=0.0,               # 0.0
+                 resamp_with_conv=True, 
+                 in_channels,               # 3
+                 resolution,                # 256
+                 z_channels,                # 4
+                 double_z=True,             # True
+                 use_linear_attn=False, 
+                 attn_type="vanilla",
                  **ignore_kwargs):
         super().__init__()
         if use_linear_attn: attn_type = "linear"
-        self.ch = ch
+        self.ch = ch # 128
         self.temb_ch = 0
-        self.num_resolutions = len(ch_mult)
-        self.num_res_blocks = num_res_blocks
-        self.resolution = resolution
-        self.in_channels = in_channels
+        self.num_resolutions = len(ch_mult) # 4
+        self.num_res_blocks = num_res_blocks # 2
+        self.resolution = resolution    # 256
+        self.in_channels = in_channels  # 3
 
         # downsampling
-        self.conv_in = torch.nn.Conv2d(in_channels,
-                                       self.ch,
+        self.conv_in = torch.nn.Conv2d(in_channels, # 3
+                                       self.ch,     # 128
                                        kernel_size=3,
                                        stride=1,
                                        padding=1)
 
-        curr_res = resolution
-        in_ch_mult = (1,)+tuple(ch_mult)
+        curr_res = resolution # 256
+        in_ch_mult = (1,)+tuple(ch_mult) # (1,1,2,4,4)
         self.in_ch_mult = in_ch_mult
         self.down = nn.ModuleList()
-        for i_level in range(self.num_resolutions):
+        for i_level in range(self.num_resolutions): # 0 -> 1 -> 2 -> 3 순서
             block = nn.ModuleList()
             attn = nn.ModuleList()
-            block_in = ch*in_ch_mult[i_level]
-            block_out = ch*ch_mult[i_level]
-            for i_block in range(self.num_res_blocks):
-                block.append(ResnetBlock(in_channels=block_in,
+            ###### 여기 ch가 잘못 들어가서, 다 바꿔야 해~~~~!!
+            block_in = ch*in_ch_mult[i_level] # 3 -> 3 -> 6 -> 12 순서
+            block_out = ch*ch_mult[i_level]   # 3 -> 6 -> 12 -> 12 순서
+            for i_block in range(self.num_res_blocks): # 0 -> 1 순서
+                block.append(ResnetBlock(in_channels=block_in,  # 특징 추출, down sampling X
                                          out_channels=block_out,
                                          temb_channels=self.temb_ch,
                                          dropout=dropout))
                 block_in = block_out
-                if curr_res in attn_resolutions:
+                if curr_res in attn_resolutions:    # yaml에는 없어서, 안돌듯.
                     attn.append(make_attn(block_in, attn_type=attn_type))
+            # attn에
             down = nn.Module()
             down.block = block
             down.attn = attn
             if i_level != self.num_resolutions-1:
-                down.downsample = Downsample(block_in, resamp_with_conv)
+                down.downsample = Downsample(block_in, resamp_with_conv) # kernel_size=3, stride=2, padding=0인 conv2d통과
                 curr_res = curr_res // 2
             self.down.append(down)
-
+        # loop 종료 시 block_in == 12
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in,
-                                       out_channels=block_in,
-                                       temb_channels=self.temb_ch,
+        self.mid.block_1 = ResnetBlock(in_channels=block_in, # 12 
+                                       out_channels=block_in,# 12
+                                       temb_channels=self.temb_ch, # 0
                                        dropout=dropout)
         self.mid.attn_1 = make_attn(block_in, attn_type=attn_type)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in,
-                                       out_channels=block_in,
-                                       temb_channels=self.temb_ch,
+        self.mid.block_2 = ResnetBlock(in_channels=block_in, # 12
+                                       out_channels=block_in,# 12
+                                       temb_channels=self.temb_ch, # 0
                                        dropout=dropout)
 
         # end
-        self.norm_out = Normalize(block_in)
-        self.conv_out = torch.nn.Conv2d(block_in,
+        self.norm_out = Normalize(block_in) # 12
+        self.conv_out = torch.nn.Conv2d(block_in, # 12
                                         2*z_channels if double_z else z_channels,
                                         kernel_size=3,
                                         stride=1,
@@ -460,13 +473,25 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, *, ch, out_ch, ch_mult=(1,2,4,8), num_res_blocks,
-                 attn_resolutions, dropout=0.0, resamp_with_conv=True, in_channels,
-                 resolution, z_channels, give_pre_end=False, tanh_out=False, use_linear_attn=False,
-                 attn_type="vanilla", **ignorekwargs):
+    def __init__(self, *, 
+                 ch,                        # 128
+                 out_ch,                    # 3
+                 ch_mult=(1,2,4,8),         # (1,2,4,4)
+                 num_res_blocks,            # 2
+                 attn_resolutions,          # []
+                 dropout=0.0,               # 0.0
+                 resamp_with_conv=True, 
+                 in_channels,               # 3
+                 resolution,                # 256
+                 z_channels,                # 4
+                 give_pre_end=False, 
+                 tanh_out=False, 
+                 use_linear_attn=False,
+                 attn_type="vanilla", 
+                 **ignorekwargs):
         super().__init__()
         if use_linear_attn: attn_type = "linear"
-        self.ch = ch
+        self.ch = ch # 
         self.temb_ch = 0
         self.num_resolutions = len(ch_mult)
         self.num_res_blocks = num_res_blocks

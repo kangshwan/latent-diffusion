@@ -284,14 +284,19 @@ class VQModelInterface(VQModel):
 
 class AutoencoderKL(pl.LightningModule):
     def __init__(self,
-                 ddconfig,
-                 lossconfig,
-                 embed_dim,
+                 ddconfig,      #느낌이 UnetModel의 파라미터와 유사한..느낌이다! 느낌만 유사하다.
+                                # double_z: true, z_channels: 4, resolution: 256,
+                                # in_channels: 3, out_ch: 3, ch:128,
+                                # ch_mult: (1, 2, 4, 4), num_res_blocks: 2,
+                                # attn_resolutions:[], dropout: 0.0,
+
+                 lossconfig,    # target: torch.nn.Identity
+                 embed_dim,     # 4
                  ckpt_path=None,
                  ignore_keys=[],
                  image_key="image",
                  colorize_nlabels=None,
-                 monitor=None,
+                 monitor=None,  #val/rec_loss
                  ):
         super().__init__()
         self.image_key = image_key
