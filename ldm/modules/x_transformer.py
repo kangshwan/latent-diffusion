@@ -583,8 +583,8 @@ class TransformerWrapper(nn.Module):
         self.to_logits = nn.Linear(dim, num_tokens) if not tie_embedding else lambda t: t @ self.token_emb.weight.t()
 
         # memory tokens (like [cls]) from Memory Transformers paper
-        num_memory_tokens = default(num_memory_tokens, 0)
-        self.num_memory_tokens = num_memory_tokens
+        num_memory_tokens = default(num_memory_tokens, 0)   # 0
+        self.num_memory_tokens = num_memory_tokens          # 0
         if num_memory_tokens > 0:
             self.memory_tokens = nn.Parameter(torch.randn(num_memory_tokens, dim))
 
@@ -598,7 +598,7 @@ class TransformerWrapper(nn.Module):
     def forward(
             self,
             x,
-            return_embeddings=False,
+            return_embeddings=False,    # True
             mask=None,
             return_mems=False,
             return_attn=False,
@@ -606,6 +606,7 @@ class TransformerWrapper(nn.Module):
             **kwargs
     ):
         b, n, device, num_mem = *x.shape, x.device, self.num_memory_tokens
+        # num_mem == 0
         x = self.token_emb(x)
         x += self.pos_emb(x)
         x = self.emb_dropout(x)
@@ -623,9 +624,9 @@ class TransformerWrapper(nn.Module):
         x, intermediates = self.attn_layers(x, mask=mask, mems=mems, return_hiddens=True, **kwargs)
         x = self.norm(x)
 
-        mem, x = x[:, :num_mem], x[:, num_mem:]
+        mem, x = x[:, :num_mem], x[:, num_mem:] # mem=[], x = x
 
-        out = self.to_logits(x) if not return_embeddings else x
+        out = self.to_logits(x) if not return_embeddings else x # out = x
 
         if return_mems:
             hiddens = intermediates.hiddens
@@ -637,5 +638,5 @@ class TransformerWrapper(nn.Module):
             attn_maps = list(map(lambda t: t.post_softmax_attn, intermediates.attn_intermediates))
             return out, attn_maps
 
-        return out
+        return out # x
 

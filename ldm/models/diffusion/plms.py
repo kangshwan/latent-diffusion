@@ -59,7 +59,7 @@ class PLMSSampler(object):
                S,
                batch_size,
                shape,
-               conditioning=None,
+               conditioning=None,       # 들어온다! c, (bs, 77, 1280)
                callback=None,
                normals_sequence=None,
                img_callback=None,
@@ -75,7 +75,7 @@ class PLMSSampler(object):
                x_T=None,
                log_every_t=100,
                unconditional_guidance_scale=1.,
-               unconditional_conditioning=None,
+               unconditional_conditioning=None, # 들어온다! uc, (bs, 77, 1280)
                # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
                **kwargs
                ):
@@ -119,7 +119,7 @@ class PLMSSampler(object):
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
                       unconditional_guidance_scale=1., unconditional_conditioning=None,):
         device = self.model.betas.device
-        b = shape[0]
+        b = shape[0] # batch size, n_samples.
         if x_T is None:
             img = torch.randn(shape, device=device)
         else:
@@ -179,10 +179,10 @@ class PLMSSampler(object):
             if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
                 e_t = self.model.apply_model(x, t, c)
             else:
-                x_in = torch.cat([x] * 2)
-                t_in = torch.cat([t] * 2)
-                c_in = torch.cat([unconditional_conditioning, c])
-                e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
+                x_in = torch.cat([x] * 2)   # *2를 통해 batch를 두배로 늘려줌!
+                t_in = torch.cat([t] * 2)   # 시간 정보를 담고 있..다?
+                c_in = torch.cat([unconditional_conditioning, c])   # c_in의 shape는 (n_samples*2, max_seq_len, n_embed), ex에서는 (8, 77, 1280)
+                e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)     # chunk(2)를 하는 이유는, uc와 c를 합쳐뒀기 때문이다~~!!
                 e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 
             if score_corrector is not None:

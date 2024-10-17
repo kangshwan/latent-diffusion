@@ -44,7 +44,7 @@ def uniform_on_device(r1, r2, shape, device):
 class DDPM(pl.LightningModule):
     # classic DDPM with Gaussian diffusion, in image space
     def __init__(self,
-                 unet_config,
+                 unet_config,                       # yaml에 명시된 unet_config를 unet 생성할 때 고대로 넘겨준다!!
                  timesteps=1000,                    # 1000
                  beta_schedule="linear",
                  loss_type="l2",
@@ -65,14 +65,14 @@ class DDPM(pl.LightningModule):
                  original_elbo_weight=0.,
                  v_posterior=0.,  # weight for choosing posterior variance as sigma = (1-v) * beta_tilde + v * beta
                  l_simple_weight=1.,
-                 conditioning_key=None,
+                 conditioning_key=None,             # crossattn
                  parameterization="eps",  # all assuming fixed variance schedules
                  scheduler_config=None,
                  use_positional_encodings=False,
                  learn_logvar=False,
                  logvar_init=0.,
                  ):
-        super().__init__()
+        super().__init__()      
         assert parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
         self.parameterization = parameterization
         print(f"{self.__class__.__name__}: Running in {self.parameterization}-prediction mode")
@@ -83,7 +83,7 @@ class DDPM(pl.LightningModule):
         self.image_size = image_size  # try conv?
         self.channels = channels
         self.use_positional_encodings = use_positional_encodings
-        self.model = DiffusionWrapper(unet_config, conditioning_key)
+        self.model = DiffusionWrapper(unet_config, conditioning_key)        # 아마 여기서 UNet과 crossattn을 쓴다고 정의된 모델을 반환할 것이다.
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
         if self.use_ema:
@@ -434,7 +434,7 @@ class LatentDiffusion(DDPM):
                  conditioning_key=None,             # crossattn
                  scale_factor=1.0,                  # 0.18215
                  scale_by_std=False,
-                 *args, **kwargs):  #linear_start: 0.00085
+                 *args, **kwargs):  # linear_start: 0.00085
                                     # linear_end: 0.012
                                     # num_timesteps_cond: 1
                                     # log_every_t: 200
@@ -453,7 +453,7 @@ class LatentDiffusion(DDPM):
             conditioning_key = None
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
-        super().__init__(conditioning_key=conditioning_key, *args, **kwargs)    #unet_config: UNetModel
+        super().__init__(conditioning_key=conditioning_key, *args, **kwargs)    #unet_config: UNetModel 여기에서 UNet을 넣어준다!! UNet은 LatentDiffusion.model로 들어가있으며, DiffusionWrapper로 쌓여있다.
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
@@ -558,8 +558,8 @@ class LatentDiffusion(DDPM):
 
     def get_learned_conditioning(self, c):
         if self.cond_stage_forward is None:
-            if hasattr(self.cond_stage_model, 'encode') and callable(self.cond_stage_model.encode):
-                c = self.cond_stage_model.encode(c)
+            if hasattr(self.cond_stage_model, 'encode') and callable(self.cond_stage_model.encode): # True. 여기 들어옴.
+                c = self.cond_stage_model.encode(c) # encode 진행
                 if isinstance(c, DiagonalGaussianDistribution):
                     c = c.mode()
             else:
@@ -720,7 +720,7 @@ class LatentDiffusion(DDPM):
 
         z = 1. / self.scale_factor * z
 
-        if hasattr(self, "split_input_params"):
+        if hasattr(self, "split_input_params"):     # False, text2img에서는 안들어감
             if self.split_input_params["patch_distributed_vq"]:
                 ks = self.split_input_params["ks"]  # eg. (128, 128)
                 stride = self.split_input_params["stride"]  # eg. (64, 64)
@@ -765,10 +765,10 @@ class LatentDiffusion(DDPM):
                     return self.first_stage_model.decode(z)
 
         else:
-            if isinstance(self.first_stage_model, VQModelInterface):
+            if isinstance(self.first_stage_model, VQModelInterface):        # 여기도 아니다.
                 return self.first_stage_model.decode(z, force_not_quantize=predict_cids or force_not_quantize)
-            else:
-                return self.first_stage_model.decode(z)
+            else:       
+                return self.first_stage_model.decode(z)     # 이거 진행됨.
 
     # same as above but without decorator
     def differentiable_decode_first_stage(self, z, predict_cids=False, force_not_quantize=False):
@@ -896,18 +896,26 @@ class LatentDiffusion(DDPM):
 
         return [rescale_bbox(b) for b in bboxes]
 
-    def apply_model(self, x_noisy, t, cond, return_ids=False):
+    def apply_model(self, x_noisy, t, cond, return_ids=False):  # apply_model,,,,여깄따!
 
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
         else:
-            if not isinstance(cond, list):
+            if not isinstance(cond, list): # cond는 list 가 아니라, 아래가 수행된다.
                 cond = [cond]
+            # self.model.conditioning_key 는 crossattn이다.
+            # cond = [tensor(bs, 77, 1280)]
             key = 'c_concat' if self.model.conditioning_key == 'concat' else 'c_crossattn'
             cond = {key: cond}
+            """
+            cond = {
+                    c_crossattn: tensor(bs, 77, 1280)
+                   }
+            """
+            # 지금부터 cond는 dict.
 
-        if hasattr(self, "split_input_params"):
+        if hasattr(self, "split_input_params"):     # False!
             assert len(cond) == 1  # todo can only deal with one conditioning atm
             assert not return_ids  
             ks = self.split_input_params["ks"]  # eg. (128, 128)
@@ -992,8 +1000,11 @@ class LatentDiffusion(DDPM):
             x_recon = fold(o) / normalization
 
         else:
-            x_recon = self.model(x_noisy, t, **cond)
-
+            # Text2Img에서는 여기로 바로 간다.
+            # 즉, self.model--UNet을 그대로 넣는다!
+            x_recon = self.model(x_noisy, t, **cond)    # UNet의 forward 확인
+        # x_recon은 UNet을 모두 통과한 결과.
+        # UNet을 통과하며, contition(BERTEmbedding으로 얻은 정보)를 지속적으로 cross-attention을 진행
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
         else:
@@ -1403,7 +1414,7 @@ class LatentDiffusion(DDPM):
 class DiffusionWrapper(pl.LightningModule):
     def __init__(self, diff_model_config, conditioning_key):
         super().__init__()
-        self.diffusion_model = instantiate_from_config(diff_model_config)
+        self.diffusion_model = instantiate_from_config(diff_model_config)   # unet_config가 들어왔기 때문에, 이건 UNet이다!
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
 

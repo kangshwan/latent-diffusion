@@ -304,8 +304,8 @@ class AutoencoderKL(pl.LightningModule):
         self.decoder = Decoder(**ddconfig)
         self.loss = instantiate_from_config(lossconfig)
         assert ddconfig["double_z"]
-        self.quant_conv = torch.nn.Conv2d(2*ddconfig["z_channels"], 2*embed_dim, 1)
-        self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
+        self.quant_conv = torch.nn.Conv2d(2*ddconfig["z_channels"], 2*embed_dim, 1)     # Conv2d(2*4, 2*4, 1)
+        self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)    # Conv2d(4, 4, 1)
         self.embed_dim = embed_dim
         if colorize_nlabels is not None:
             assert type(colorize_nlabels)==int
@@ -329,17 +329,17 @@ class AutoencoderKL(pl.LightningModule):
     def encode(self, x):
         h = self.encoder(x)
         moments = self.quant_conv(h)
-        posterior = DiagonalGaussianDistribution(moments)
+        posterior = DiagonalGaussianDistribution(moments)       # 여기에 무슨 비밀이 숨어있나?
         return posterior
 
     def decode(self, z):
         z = self.post_quant_conv(z)
-        dec = self.decoder(z)
+        dec = self.decoder(z) # Decoder Forward.
         return dec
 
     def forward(self, input, sample_posterior=True):
         posterior = self.encode(input)
-        if sample_posterior:
+        if sample_posterior: 
             z = posterior.sample()
         else:
             z = posterior.mode()

@@ -405,8 +405,8 @@ class Encoder(nn.Module):
             block = nn.ModuleList()
             attn = nn.ModuleList()
             ###### 여기 ch가 잘못 들어가서, 다 바꿔야 해~~~~!!
-            block_in = ch*in_ch_mult[i_level] # 3 -> 3 -> 6 -> 12 순서
-            block_out = ch*ch_mult[i_level]   # 3 -> 6 -> 12 -> 12 순서
+            block_in = ch*in_ch_mult[i_level] # 128 -> 128 -> 256 -> 512 순서
+            block_out = ch*ch_mult[i_level]   # 128 -> 256 -> 512 -> 512 순서
             for i_block in range(self.num_res_blocks): # 0 -> 1 순서
                 block.append(ResnetBlock(in_channels=block_in,  # 특징 추출, down sampling X
                                          out_channels=block_out,
@@ -420,26 +420,27 @@ class Encoder(nn.Module):
             down.block = block
             down.attn = attn
             if i_level != self.num_resolutions-1:
+                # block_in : 128 -> 256 -> 512 순서
                 down.downsample = Downsample(block_in, resamp_with_conv) # kernel_size=3, stride=2, padding=0인 conv2d통과
                 curr_res = curr_res // 2
             self.down.append(down)
-        # loop 종료 시 block_in == 12
+        # loop 종료 시 block_in == 512
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in, # 12 
-                                       out_channels=block_in,# 12
+        self.mid.block_1 = ResnetBlock(in_channels=block_in,        # 512
+                                       out_channels=block_in,       # 512
                                        temb_channels=self.temb_ch, # 0
                                        dropout=dropout)
-        self.mid.attn_1 = make_attn(block_in, attn_type=attn_type)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in, # 12
-                                       out_channels=block_in,# 12
+        self.mid.attn_1 = make_attn(block_in, attn_type=attn_type)  # 512
+        self.mid.block_2 = ResnetBlock(in_channels=block_in,        # 512
+                                       out_channels=block_in,       # 512
                                        temb_channels=self.temb_ch, # 0
                                        dropout=dropout)
 
         # end
-        self.norm_out = Normalize(block_in) # 12
-        self.conv_out = torch.nn.Conv2d(block_in, # 12
-                                        2*z_channels if double_z else z_channels,
+        self.norm_out = Normalize(block_in) # 512
+        self.conv_out = torch.nn.Conv2d(block_in, # 512
+                                        2*z_channels if double_z else z_channels, # 8
                                         kernel_size=3,
                                         stride=1,
                                         padding=1)
@@ -491,51 +492,51 @@ class Decoder(nn.Module):
                  **ignorekwargs):
         super().__init__()
         if use_linear_attn: attn_type = "linear"
-        self.ch = ch # 
+        self.ch = ch # 128
         self.temb_ch = 0
-        self.num_resolutions = len(ch_mult)
-        self.num_res_blocks = num_res_blocks
-        self.resolution = resolution
-        self.in_channels = in_channels
-        self.give_pre_end = give_pre_end
-        self.tanh_out = tanh_out
+        self.num_resolutions = len(ch_mult) # 4
+        self.num_res_blocks = num_res_blocks # 2
+        self.resolution = resolution # 256
+        self.in_channels = in_channels # 3
+        self.give_pre_end = give_pre_end # False
+        self.tanh_out = tanh_out # False
 
         # compute in_ch_mult, block_in and curr_res at lowest res
-        in_ch_mult = (1,)+tuple(ch_mult)
-        block_in = ch*ch_mult[self.num_resolutions-1]
-        curr_res = resolution // 2**(self.num_resolutions-1)
-        self.z_shape = (1,z_channels,curr_res,curr_res)
+        in_ch_mult = (1,)+tuple(ch_mult) # (1, 1, 2, 4, 4)
+        block_in = ch*ch_mult[self.num_resolutions-1]           # 128*4 = 512
+        curr_res = resolution // 2**(self.num_resolutions-1)    # 256//8 = 32
+        self.z_shape = (1,z_channels,curr_res,curr_res)         # (1, 4, 32, 32)
         print("Working with z of shape {} = {} dimensions.".format(
             self.z_shape, np.prod(self.z_shape)))
 
         # z to block_in
-        self.conv_in = torch.nn.Conv2d(z_channels,
-                                       block_in,
+        self.conv_in = torch.nn.Conv2d(z_channels,  # 4
+                                       block_in,    # 512
                                        kernel_size=3,
                                        stride=1,
                                        padding=1)
 
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in,
-                                       out_channels=block_in,
+        self.mid.block_1 = ResnetBlock(in_channels=block_in,        # 512
+                                       out_channels=block_in,       # 512
                                        temb_channels=self.temb_ch,
                                        dropout=dropout)
-        self.mid.attn_1 = make_attn(block_in, attn_type=attn_type)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in,
-                                       out_channels=block_in,
+        self.mid.attn_1 = make_attn(block_in, attn_type=attn_type)  # 512
+        self.mid.block_2 = ResnetBlock(in_channels=block_in,        # 512
+                                       out_channels=block_in,       # 512
                                        temb_channels=self.temb_ch,
                                        dropout=dropout)
 
         # upsampling
         self.up = nn.ModuleList()
-        for i_level in reversed(range(self.num_resolutions)):
+        for i_level in reversed(range(self.num_resolutions)): # 3-> 2-> 1-> 0 순서
             block = nn.ModuleList()
             attn = nn.ModuleList()
-            block_out = ch*ch_mult[i_level]
-            for i_block in range(self.num_res_blocks+1):
-                block.append(ResnetBlock(in_channels=block_in,
-                                         out_channels=block_out,
+            block_out = ch*ch_mult[i_level]     # 512 -> 512 -> 256 -> 128 순서
+            for i_block in range(self.num_res_blocks+1): # 3
+                block.append(ResnetBlock(in_channels=block_in,      # 512 -> 512 -> 512 -> 256 순서
+                                         out_channels=block_out,    # 512 -> 512 -> 256 -> 128 순서
                                          temb_channels=self.temb_ch,
                                          dropout=dropout))
                 block_in = block_out
@@ -545,14 +546,14 @@ class Decoder(nn.Module):
             up.block = block
             up.attn = attn
             if i_level != 0:
-                up.upsample = Upsample(block_in, resamp_with_conv)
+                up.upsample = Upsample(block_in, resamp_with_conv) # 512 -> 512 -> 256 순서. interpolate 진행 후, convolution 통과
                 curr_res = curr_res * 2
             self.up.insert(0, up) # prepend to get consistent order
 
         # end
         self.norm_out = Normalize(block_in)
-        self.conv_out = torch.nn.Conv2d(block_in,
-                                        out_ch,
+        self.conv_out = torch.nn.Conv2d(block_in,   # 128
+                                        out_ch,     # 3
                                         kernel_size=3,
                                         stride=1,
                                         padding=1)

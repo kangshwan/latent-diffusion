@@ -100,8 +100,9 @@ class BERTEmbedder(AbstractEncoder):
             tokens = self.tknz_fn(text)#.to(self.device)
         else:
             tokens = text
+        # tokens.shape = (n_samples, 77)
         z = self.transformer(tokens, return_embeddings=True)
-        return z
+        return z # (n_samples, max_seq_len, n_embed) -> (n_samples, 77, 1280)
 
     def encode(self, text):
         # output of length 77

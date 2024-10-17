@@ -212,7 +212,7 @@ class ResBlock(TimestepBlock):
         elif down:
             self.h_upd = Downsample(channels, False, dims)
             self.x_upd = Downsample(channels, False, dims)
-        else:
+        else:   # 일단 지금 보는 text2img는 이거만 들어감
             self.h_upd = self.x_upd = nn.Identity()
 
         self.emb_layers = nn.Sequential(
@@ -264,12 +264,12 @@ class ResBlock(TimestepBlock):
         emb_out = self.emb_layers(emb).type(h.dtype)
         while len(emb_out.shape) < len(h.shape):
             emb_out = emb_out[..., None]
-        if self.use_scale_shift_norm:
+        if self.use_scale_shift_norm: # 안해요
             out_norm, out_rest = self.out_layers[0], self.out_layers[1:]
             scale, shift = th.chunk(emb_out, 2, dim=1)
             h = out_norm(h) * (1 + scale) + shift
             h = out_rest(h)
-        else:
+        else:   # 이거해요
             h = h + emb_out
             h = self.out_layers(h)
         return self.skip_connection(x) + h
@@ -474,11 +474,11 @@ class UNetModel(nn.Module):
         if context_dim is not None:
             assert use_spatial_transformer, 'Fool!! You forgot to use the spatial transformer for your cross-attention conditioning...'
             from omegaconf.listconfig import ListConfig
-            if type(context_dim) == ListConfig:
-                context_dim = list(context_dim)
+            if type(context_dim) == ListConfig:     # text2img에서는 context_dim = 숫자이므로, if 조건은 Fasle
+                context_dim = list(context_dim)     # 안함
 
         if num_heads_upsample == -1:
-            num_heads_upsample = num_heads
+            num_heads_upsample = num_heads          # 8
 
         if num_heads == -1:
             assert num_head_channels != -1, 'Either num_heads or num_head_channels has to be set'
@@ -486,81 +486,86 @@ class UNetModel(nn.Module):
         if num_head_channels == -1:
             assert num_heads != -1, 'Either num_heads or num_head_channels has to be set'
 
-        self.image_size = image_size
-        self.in_channels = in_channels
-        self.model_channels = model_channels
-        self.out_channels = out_channels
-        self.num_res_blocks = num_res_blocks
-        self.attention_resolutions = attention_resolutions
-        self.dropout = dropout
-        self.channel_mult = channel_mult
-        self.conv_resample = conv_resample
-        self.num_classes = num_classes
-        self.use_checkpoint = use_checkpoint
-        self.dtype = th.float16 if use_fp16 else th.float32
-        self.num_heads = num_heads
-        self.num_head_channels = num_head_channels
-        self.num_heads_upsample = num_heads_upsample
-        self.predict_codebook_ids = n_embed is not None
+        self.image_size = image_size                        # 32
+        self.in_channels = in_channels                      # 4
+        self.model_channels = model_channels                # 320
+        self.out_channels = out_channels                    # 4
+        self.num_res_blocks = num_res_blocks                # 2
+        self.attention_resolutions = attention_resolutions  # (4, 2, 1)
+        self.dropout = dropout                              # 0
+        self.channel_mult = channel_mult                    # (1, 2, 4, 4)
+        self.conv_resample = conv_resample                  # True
+        self.num_classes = num_classes                      # None
+        self.use_checkpoint = use_checkpoint                # True
+        self.dtype = th.float16 if use_fp16 else th.float32 # th.float32
+        self.num_heads = num_heads                          # 8
+        self.num_head_channels = num_head_channels          # -1
+        self.num_heads_upsample = num_heads_upsample        # 8
+        self.predict_codebook_ids = n_embed is not None     # False
 
-        time_embed_dim = model_channels * 4
-        self.time_embed = nn.Sequential(
-            linear(model_channels, time_embed_dim),
+        time_embed_dim = model_channels * 4                 # 320*4 = 1280
+        self.time_embed = nn.Sequential(                    # 
+            linear(model_channels, time_embed_dim),         
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
 
-        if self.num_classes is not None:
+        if self.num_classes is not None:                    # 안함
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
 
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
-                    conv_nd(dims, in_channels, model_channels, 3, padding=1)
+                    # 2, 4, 320, 3, 1
+                    conv_nd(dims, in_channels, model_channels, 3, padding=1)    #TimestepEmbedSequential로 묶였지만, 그냥 Conv2d다!
                 )
             ]
         )
-        self._feature_size = model_channels
-        input_block_chans = [model_channels]
-        ch = model_channels
+        self._feature_size = model_channels                 # 320
+        input_block_chans = [model_channels]                # [320]
+        ch = model_channels                                 # 320
         ds = 1
-        for level, mult in enumerate(channel_mult):
-            for _ in range(num_res_blocks):
+        for level, mult in enumerate(channel_mult):         # level: 0,1,2,3 | mult: 1, 2, 4, 4 순서
+            for _ in range(num_res_blocks):                 # 2
                 layers = [
-                    ResBlock(
-                        ch,
-                        time_embed_dim,
-                        dropout,
-                        out_channels=mult * model_channels,
-                        dims=dims,
-                        use_checkpoint=use_checkpoint,
-                        use_scale_shift_norm=use_scale_shift_norm,
+                    # TimestepBlock을 상속하고 있는 ResBlock. 일반 block과 time에 영향받는 것들에 대해 관리하기 위해 따로 상속을 진행한 것 같다. 
+                    # 이러면 TimestepEmbedSequential에서 forward를 진행할 때
+                    # ResBlock(x, emb) 처럼 forward를 진행할 수 있다.
+                    ResBlock(                                       
+                        ch,                                         # 320
+                        time_embed_dim,                             # 1280
+                        dropout,                                    # 0
+                        out_channels=mult * model_channels,         # [320, 320], [640, 640], [1280, 1280], [1280, 1280] 순서. []는 num_res_block loop 도는걸 의미함.
+                        dims=dims,                                  # 2
+                        use_checkpoint=use_checkpoint,              # True
+                        use_scale_shift_norm=use_scale_shift_norm,  # False
                     )
                 ]
-                ch = mult * model_channels
-                if ds in attention_resolutions:
-                    if num_head_channels == -1:
-                        dim_head = ch // num_heads
-                    else:
+                ch = mult * model_channels                  # [320, 320], [640, 640], [1280, 1280], [1280, 1280] 순서. []는 num_res_block loop 도는걸 의미함.
+                if ds in attention_resolutions:             # 1 in (4, 2, 1) -- 수행한다.
+                    if num_head_channels == -1:             # 수행한다.
+                        dim_head = ch // num_heads          # ch = 320일 때, dim_head = 40, ch=640 일 때, dim_head = 80, ch=1280일 때, dim_head = 160
+                    else:                       
                         num_heads = ch // num_head_channels
                         dim_head = num_head_channels
-                    if legacy:
+                    if legacy:  # 안함.
                         #num_heads = 1
                         dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
                     layers.append(
                         AttentionBlock(
-                            ch,
+                            ch,     
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
-                        ) if not use_spatial_transformer else SpatialTransformer(
+                        ) if not use_spatial_transformer else SpatialTransformer(   # [320, 320], [640, 640], [1280, 1280], [1280, 1280] 순서. []는 num_res_block loop 도는걸 의미함.
                             ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
                         )
                     )
-                self.input_blocks.append(TimestepEmbedSequential(*layers))
+                self.input_blocks.append(TimestepEmbedSequential(*layers)) 
                 self._feature_size += ch
                 input_block_chans.append(ch)
+            # input_blocks에  [AttentionBlock(640, ..), AttentionBlock(640, ..)], [AttentionBlock(1280, ..), AttentionBlock(1280, ..)], [AttentionBlock(1280, ..), AttentionBlock(1280, ..)] 들어간다. 최종적으로
             if level != len(channel_mult) - 1:
                 out_ch = ch
                 self.input_blocks.append(
@@ -720,20 +725,22 @@ class UNetModel(nn.Module):
             self.num_classes is not None
         ), "must specify y if and only if the model is class-conditional"
         hs = []
+                                    # timestep: shape(4,)인 1-d array, 값은 961~1까지 변함, 320
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-        emb = self.time_embed(t_emb)
+        # t_emb.shape = (4, 320)
+        emb = self.time_embed(t_emb) # NN통과해서 embed차원으로 넘긴다.
 
-        if self.num_classes is not None:
+        if self.num_classes is not None: # None이다.
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
         h = x.type(self.dtype)
-        for module in self.input_blocks:
+        for module in self.input_blocks: # ResBlock의 경우 emb 사용, SpatialTransformer인 경우 context사용 (for cross-attention) 즉, 모든 UNet을 거치며 cross-attention을 진행함.
             h = module(h, emb, context)
             hs.append(h)
         h = self.middle_block(h, emb, context)
         for module in self.output_blocks:
-            h = th.cat([h, hs.pop()], dim=1)
+            h = th.cat([h, hs.pop()], dim=1) # UNet skip connection
             h = module(h, emb, context)
         h = h.type(x.dtype)
         if self.predict_codebook_ids:

@@ -16,8 +16,9 @@ def load_model_from_config(config, ckpt, verbose=False):
     print(f"Loading model from {ckpt}")
     pl_sd = torch.load(ckpt, map_location="cpu")
     sd = pl_sd["state_dict"]
-    model = instantiate_from_config(config.model) # 모델에 맞는 모듈 import
-    m, u = model.load_state_dict(sd, strict=False)
+    # breakpoint()
+    model = instantiate_from_config(config.model) # LatentDiffusion!!!
+    m, u = model.load_state_dict(sd, strict=False) # satedict로 불러오기
     if len(m) > 0 and verbose:
         print("missing keys:")
         print(m)
@@ -25,7 +26,7 @@ def load_model_from_config(config, ckpt, verbose=False):
         print("unexpected keys:")
         print(u)
 
-    model.cuda()
+    # model.cuda()
     model.eval()
     return model
 
@@ -105,15 +106,17 @@ if __name__ == "__main__":
 
 
     config = OmegaConf.load("configs/latent-diffusion/txt2img-1p4B-eval.yaml")  # TODO: Optionally download from same location as ckpt and chnage this logic
+    breakpoint()
     model = load_model_from_config(config, "models/ldm/text2img-large/model.ckpt")  # TODO: check path
-
+    breakpoint()
+    # model: LatentDiffusion(DDPM)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
 
     if opt.plms:
         sampler = PLMSSampler(model)
     else:
-        sampler = DDIMSampler(model)
+        sampler = DDIMSampler(model) # 아마? 이걸로 선택될 것
 
     os.makedirs(opt.outdir, exist_ok=True)
     outpath = opt.outdir
@@ -129,13 +132,16 @@ if __name__ == "__main__":
     with torch.no_grad():
         with model.ema_scope():
             uc = None
-            if opt.scale != 1.0:
-                uc = model.get_learned_conditioning(opt.n_samples * [""])
+            if opt.scale != 1.0: # opt.scale == 5.0
+                uc = model.get_learned_conditioning(opt.n_samples * [""])       # model.cond_stage_model.encode 를 수행한다. cond_stage_model은 BERTEmbedder이고, BERTEmbedder의 .encode함수는 입력 opt.n_samples * [""]를 입력으로 해 forward 진행
+                                                                                # text token화 후, TrasformerWrapper를 통과해 (bs, 77, 1280)으로 임베딩! 하지만 uc는 아무것도 들어있지 않다..
             for n in trange(opt.n_iter, desc="Sampling"):
-                c = model.get_learned_conditioning(opt.n_samples * [prompt])
-                shape = [4, opt.H//8, opt.W//8]
-                samples_ddim, _ = sampler.sample(S=opt.ddim_steps,
-                                                 conditioning=c,
+                c = model.get_learned_conditioning(opt.n_samples * [prompt])    # 위 uc와 동일하게 진행되나, prompt의 Encoding을 진행함에 차이가 있다.
+                shape = [4, opt.H//8, opt.W//8] # default: [4, 32, 32]
+                # 이놈의 sampler가 쌈뽕짝한 것들을 담당할 것 같다... 하지만 DDIMSampler안에 model, 즉 LatentDiffusion이 parameter로 제공되기 때문에,
+                # 우선은 LatentDiffusion의 코드 진행에 대해 파악하자. 지금까지 AutoencodkerKL, BERTEmbedder 完. 밥을 먹고 와서 UNet을 파악 하자!!!!!! 젭라!!~!~!~
+                samples_ddim, _ = sampler.sample(S=opt.ddim_steps, # 50              
+                                                 conditioning=c,    # c는 (bs, 77, 1280)의 shape을 가진 Tensor일 것이다.
                                                  batch_size=opt.n_samples,
                                                  shape=shape,
                                                  verbose=False,
@@ -143,9 +149,14 @@ if __name__ == "__main__":
                                                  unconditional_conditioning=uc,
                                                  eta=opt.ddim_eta)
 
-                x_samples_ddim = model.decode_first_stage(samples_ddim)
-                x_samples_ddim = torch.clamp((x_samples_ddim+1.0)/2.0, min=0.0, max=1.0)
+                x_samples_ddim = model.decode_first_stage(samples_ddim)     # 최종적으로 나온 sample의 ddim을 제공, model.first_stage_model.decode(samples_ddim)이 진행됨. (samples_ddim 내부에서 조금 수정됨)
+                                                                            # model.first_stage_model은 AutoencoderKL이고, AutoencoderKL의 decode함수는 AutoencoderKL.post_quant_conv(z) -> AutoencoderKL.decoder(z) 통과해 return.
+                                                                            # post_quant_conv는 Convolution으로, channel에 맞게 복원하는 과정이라..고 생각한다.
+                                                                            # AutoencoderKL.decoder는 module Decoder, Upsampling을 진행하는 Decoder이다.
 
+                x_samples_ddim = torch.clamp((x_samples_ddim+1.0)/2.0, min=0.0, max=1.0)
+                
+                # sample이 4개 나왔따~!
                 for x_sample in x_samples_ddim:
                     x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                     Image.fromarray(x_sample.astype(np.uint8)).save(os.path.join(sample_path, f"{base_count:04}.png"))
